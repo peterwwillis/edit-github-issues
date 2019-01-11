@@ -39,6 +39,13 @@ class GHIssues(Util):
         #Debug("load_ghi(): \"%s\"" % data)
         self.issues = data
 
+class EGDoc(object):
+    issues = []
+
+class EGDocs(EGDoc):
+    filename = None
+
+
 class EditGhi(GHIssues):
     data = {}
 
@@ -46,45 +53,67 @@ class EditGhi(GHIssues):
         """ Load a markdown file and separate its sections by '---' separator """
         content = path.read()
         c=0
-        self.data = []
+        self.data[name] = []
         for line in content.splitlines():
             if line == "---":
                 c = c+1
                 continue
-            if len(self.data) == c:
-                self.data.append([])
-            self.data[c].append(line)
+            if len(self.data[name]) == c:
+                self.data[name].append([])
+            self.data[name][c].append(line)
 
-    def parse_file(self, doc):
+    def parse_file(self, docs):
         """ Go through each separated section from loaded markdown file.
             Find list items with a checkbox or no checkbox, add them as
             issues to track.
         """
-        issues = []
-        for row in doc:
-            cols = row.split()
-            if len(cols) < 1 or len(cols[0]) < 1: continue
-            if cols[0] == "-": # list item
-                if cols[1] == "[" and cols[2] == "]": # empty checkbox
-                    state, rest = "open", cols[3:]
-                elif cols[1] == "[x]": # checked box
-                    state, rest = "closed", cols[2:]
-                else: # should probably look for a '#number' section too
-                    continue
-                issues.append({'state': state, 'title': " ".join(rest)})
-        return issues
+        _docs = []
+        for doci, doc in enumerate(docs):
+            _docs.append([])
+
+            for rowi, row in enumerate(doc): 
+                cols = row.split()
+                if len(cols) < 1 or len(cols[0]) < 1: continue
+                if cols[0] == "-": # list item
+                    state, title, issues, tags = None, None, [], []
+
+                    # record "[", "]" as an empty checkbox (open issue)
+                    if cols[1] == "[" and cols[2] == "]":
+                        state, rest = "open", cols[3:]
+                    # record "[x]" as a checked box (closed issue)
+                    elif cols[1] == "[x]":
+                        state, rest = "closed", cols[2:]
+                    else:
+                        continue
+
+                    for rcol in rest:
+                        # Find issue numbers
+                        if rcol[0] == '#':
+                            if rcol[1:].isdigit():
+                                issues.append( rcol[1:] )
+                        # Find '[tag,tag2]' tags
+                        elif rcol[0] == '[':
+                            if rcol[-1] == ']':
+                                tags.append( rcol[1:-1].split(",") )
+                        # Find "username/repo#number" issue references
+                        else:
+                            m = re.search(r'^[\w.]+/[\w.]+#([0-9]+)$', rcol, re.I)
+                            if m != None and m.group(1):
+                                issues.append( m.group(1) )
+
+                    _docs[doci].append({'state': state, 'title': " ".join(rest), 'issue': issues, 'tag': tags})
+        return _docs
+
+    def handle_issues(self, docs):
+        for doc in docs:
+            print("Issues: '%s'" % doc)
+        return
 
     def edit_ghi(self):
-        for doc in self.data:
-            md_issues = self.parse_file(doc)
-            for md_i in md_issues:
-                for gh_i in self.issues:
-                    if 'title' in gh_i and 'title' in md_i and gh_i['title'] == md_i['title']:
-                        print("Found markdown issue '%s' matching github issue '%s'" % (md_i['title'], gh_i['title']))
-                        if 'state' in gh_i and 'state' in md_i and gh_i['state'] != md_i['state']:
-                            print("  Error: state of markdown issue doesn't match github issue")
-                    #else:
-                    #    print("Did not match markdown issue '%s' with github issue '%s'" % (md_i['title'], gh_i['title']))
+        for name, doc in self.data.items():
+            print("Processing file '%s'" % name)
+            doc_issues = self.parse_file(doc)
+            self.handle_issues(doc_issues)
 
 
 def options():
@@ -101,7 +130,7 @@ def main():
     v.load_ghi()
 
     if a.file != None:
-        v.load_file('data', a.file[0])
+        v.load_file(a.file[0].name, a.file[0])
         v.edit_ghi()
 
 if __name__ == "__main__":
