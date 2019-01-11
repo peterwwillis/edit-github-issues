@@ -6,6 +6,7 @@ if sys.version_info < (3, 5):
 import re
 import argparse
 import subprocess
+import json
 
 class Log(object):
     logging = True
@@ -22,51 +23,69 @@ class Util(object):
         return subprocess.check_output(cmd)
 
 class GHIssues(Util):
-    @staticmethod
-    def load_ghi():
-        opencmd = [ "ghi", "list", "--state", "open" ]
-        closecmd = [ "ghi", "list", "--state", "closed" ]
-        result = Util.exec( cmd ).decode('utf-8')
-        rows = [ "issue", "state", "tags", "title" ]
-        data = []
-        for row in result.split("\n"):
-            cols = row.split(",", maxsplit=len(rows)-1)
-            # Remove empty list item due to trailing newline
-            if len(cols[0]) < 1: continue
-            # Remove quotes around the tags
-            cols[2] = cols[2][1:-1]
-            if len(cols[2]) < 1:
-                cols[2] = None
-            else:
-                cols[2] = cols[2].split(",")
-            foo = {}
-            for i in range(len(rows)):
-                foo[ rows[i].lower() ] = cols[i]
-            data.append(foo)
-        Debug("load_ghi(): \"%s\"" % data)
-        return data
+    issues = None
+    def load_ghi(self):
+        """
+        Get the list of GitHub Issues as a JSON dump.
+        Data we get back that's useful:
+            - number
+            - title
+            - labels
+              - name
+            - state
+        """
+        issues = Util.exec( [ "ghi", "list", "--state", "all", "--json-out", "--quiet" ] ).decode('utf-8')
+        data = json.loads(issues)
+        #Debug("load_ghi(): \"%s\"" % data)
+        self.issues = data
 
 class EditGhi(GHIssues):
     data = {}
 
     def load_file(self, name, path):
+        """ Load a markdown file and separate its sections by '---' separator """
         content = path.read()
+        c=0
+        self.data = []
         for line in content.splitlines():
             if line == "---":
-                Debug("Found new document")
-                
-        print("content: \"%s\"" % content)
+                c = c+1
+                continue
+            if len(self.data) == c:
+                self.data.append([])
+            self.data[c].append(line)
 
     def parse_file(self, doc):
-        print("Doc \"%s\"" % doc)
+        """ Go through each separated section from loaded markdown file.
+            Find list items with a checkbox or no checkbox, add them as
+            issues to track.
+        """
+        issues = []
         for row in doc:
-            print("Row \"%s\"" % row)
             cols = row.split()
-            print("Cols: \"%s\"" % cols)
+            if len(cols) < 1 or len(cols[0]) < 1: continue
+            if cols[0] == "-": # list item
+                if cols[1] == "[" and cols[2] == "]": # empty checkbox
+                    state, rest = "open", cols[3:]
+                elif cols[1] == "[x]": # checked box
+                    state, rest = "closed", cols[2:]
+                else: # should probably look for a '#number' section too
+                    continue
+                issues.append({'state': state, 'title': " ".join(rest)})
+        return issues
 
     def edit_ghi(self):
-        for doc in self.data["data"]:
-            self.parse_file(doc)
+        for doc in self.data:
+            md_issues = self.parse_file(doc)
+            for md_i in md_issues:
+                for gh_i in self.issues:
+                    if 'title' in gh_i and 'title' in md_i and gh_i['title'] == md_i['title']:
+                        print("Found markdown issue '%s' matching github issue '%s'" % (md_i['title'], gh_i['title']))
+                        if 'state' in gh_i and 'state' in md_i and gh_i['state'] != md_i['state']:
+                            print("  Error: state of markdown issue doesn't match github issue")
+                    #else:
+                    #    print("Did not match markdown issue '%s' with github issue '%s'" % (md_i['title'], gh_i['title']))
+
 
 def options():
     parser = argparse.ArgumentParser(description='Edit GitHub issues in bulk')
