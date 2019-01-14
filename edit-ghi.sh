@@ -1,3 +1,4 @@
 #!/bin/bash
-. edit-ghi.venv/bin/activate
-./edit-ghi.py $*
+MYDIR=$(readlink -f $(dirname ${BASH_SOURCE[0]}))
+. $MYDIR/edit-ghi.venv/bin/activate
+$MYDIR/edit-ghi.py $*
