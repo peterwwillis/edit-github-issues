@@ -141,7 +141,12 @@ class EGIssue(object):
 class EditGhi(GHIssues):
     """ Class to manage editing of GitHub issues """
 
-    files = []
+    def __init__(self, files):
+        self.files = []
+        self.load_gh_issues()
+        if files != None:
+            for f in files:
+                self.load_file(f)
 
     def load_file(self, path):
         self.files.append( EGFile(path) )
@@ -167,12 +172,8 @@ def main():
     p = options()
     a = p.parse_args()
 
-    v = EditGhi()
-    v.load_gh_issues()
-
-    if a.file != None:
-        v.load_file(a.file[0])
-        v.edit_ghi()
+    v = EditGhi( a.file )
+    v.edit_ghi()
 
 if __name__ == "__main__":
     main()
