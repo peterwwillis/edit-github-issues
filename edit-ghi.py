@@ -24,7 +24,7 @@ class Util(object):
 
 class GHIssues(Util):
     issues = None
-    def load_ghi(self):
+    def load_gh_issues(self):
         """
         Get the list of GitHub Issues as a JSON dump.
         Data we get back that's useful:
@@ -34,86 +34,127 @@ class GHIssues(Util):
               - name
             - state
         """
-        issues = Util.exec( [ "ghi", "list", "--state", "all", "--json-out", "--quiet" ] ).decode('utf-8')
+        issues = Util.exec( 
+                [ "ghi", "list", "--state", "all", "--json-out", "--quiet" ] 
+        ).decode('utf-8')
         data = json.loads(issues)
         #Debug("load_ghi(): \"%s\"" % data)
         self.issues = data
 
-class EGDoc(object):
-    issues = []
+class EGFile(object):
+    """
+    Loads a markdown file and separates its sections by '---' separator 
+    into separate document streams (kinda like YAML). Detects potential GitHub
+    issues in each document if a line starts with ' - [ ]' or ' - [x]'.
+    """
+    def __init__(self, path):
+        self.docs = []
+        filename = path.name
+        self.content = path.read()
+        self._load_content()
+    def _load_content(self):
+        doci=0
+        for line in self.content.splitlines():
+            if line == "---":
+                doci = doci+1
+                continue
+            if self.doc(doci) == None:
+                self.add_doc()
+            self.doc(doci).add_line(line)
+    def __repr__(self):
+        return '<%s, docs: [%s]>' % (self.__class__.__name__, self.docs)
+    def add_doc(self):
+        self.docs.append( EGDoc() )
+    def doc(self, num):
+        if len(self.docs) >= (num+1):
+            if self.docs[num] != None:
+                return self.docs[num]
+        return None
 
-class EGDocs(EGDoc):
-    filename = None
+class EGDoc(object):
+    """ A class to manage a list of issues """
+    def __init__(self):
+        self.heading = None
+        self.issues = []
+    def __repr__(self):
+        return '<%s, issues: [%s]>' % (self.__class__.__name__, self.issues)
+    def add_issue(self, args):
+        if not 'title' in args:
+            raise Exception("Error: all issues need a title (got: '%s')" % args)
+        if not 'state' in args:
+            raise Exception("Error: all issues need a state (got: '%s')" % args)
+        self.issues.append( EGIssue(args) )
+
+    def add_line(self, line):
+        cols = line.split()
+
+        if len(cols) < 1 or len(cols[0]) < 1: # skip empty lines
+            return
+
+        if cols[0][0] == '#': # headings
+            self.heading = " ".join(cols)
+
+        if cols[0] == "-": # list item
+            args = { }
+            args['issues'], args['tags'] = [], []
+            #state, title, issues, tags = None, None, [], []
+
+            # record "[", "]" as an empty checkbox (open issue)
+            if cols[1] == "[" and cols[2] == "]":
+                args['state'], rest = "open", cols[3:]
+            # record "[x]" as a checked box (closed issue)
+            elif cols[1] == "[x]":
+                args['state'], rest = "closed", cols[2:]
+            else:
+                return
+
+            for rcol in rest:
+                if rcol[0] == '#': # Find issue numbers
+                    if rcol[1:].isdigit():
+                        args['issues'].append( rcol[1:] )
+                elif rcol[0] == '[': # Find '[tag,tag2]' tags
+                    if rcol[-1] == ']':
+                        args['tags'].append( rcol[1:-1].split(",") )
+                else: # Find "username/repo#number" issue references
+                    m = re.search(r'^[\w.]+/[\w.]+#([0-9]+)$', rcol, re.I)
+                    if m != None and m.group(1):
+                        args['issues'].append( m.group(1) )
+
+            args['title'] = " ".join(rest)
+            if self.heading != None:
+                args['heading'] = self.heading
+
+            self.add_issue( args )
+        return
+
+class EGIssue(object):
+    """ An object for an individual issue """
+    def __init__(self, args):
+        self.data = {}
+        for k in args:
+            self.data[k] = args[k]
+    def __repr__(self):
+        return '<%s, data: [%s]>' % (self.__class__.__name__, self.data)
+
 
 
 class EditGhi(GHIssues):
-    data = {}
+    """ Class to manage editing of GitHub issues """
 
-    def load_file(self, name, path):
-        """ Load a markdown file and separate its sections by '---' separator """
-        content = path.read()
-        c=0
-        self.data[name] = []
-        for line in content.splitlines():
-            if line == "---":
-                c = c+1
-                continue
-            if len(self.data[name]) == c:
-                self.data[name].append([])
-            self.data[name][c].append(line)
+    files = []
 
-    def parse_file(self, docs):
-        """ Go through each separated section from loaded markdown file.
-            Find list items with a checkbox or no checkbox, add them as
-            issues to track.
-        """
-        _docs = []
-        for doci, doc in enumerate(docs):
-            _docs.append([])
+    def load_file(self, path):
+        self.files.append( EGFile(path) )
 
-            for rowi, row in enumerate(doc): 
-                cols = row.split()
-                if len(cols) < 1 or len(cols[0]) < 1: continue
-                if cols[0] == "-": # list item
-                    state, title, issues, tags = None, None, [], []
-
-                    # record "[", "]" as an empty checkbox (open issue)
-                    if cols[1] == "[" and cols[2] == "]":
-                        state, rest = "open", cols[3:]
-                    # record "[x]" as a checked box (closed issue)
-                    elif cols[1] == "[x]":
-                        state, rest = "closed", cols[2:]
-                    else:
-                        continue
-
-                    for rcol in rest:
-                        # Find issue numbers
-                        if rcol[0] == '#':
-                            if rcol[1:].isdigit():
-                                issues.append( rcol[1:] )
-                        # Find '[tag,tag2]' tags
-                        elif rcol[0] == '[':
-                            if rcol[-1] == ']':
-                                tags.append( rcol[1:-1].split(",") )
-                        # Find "username/repo#number" issue references
-                        else:
-                            m = re.search(r'^[\w.]+/[\w.]+#([0-9]+)$', rcol, re.I)
-                            if m != None and m.group(1):
-                                issues.append( m.group(1) )
-
-                    _docs[doci].append({'state': state, 'title': " ".join(rest), 'issue': issues, 'tag': tags})
-        return _docs
-
-    def handle_issues(self, docs):
-        for doc in docs:
-            print("Issues: '%s'" % doc)
+    def handle_issues(self):
+        for egf in self.files:
+            for doc in egf.docs:
+                for issue in doc.issues:
+                    print("Issue: '%s'" % issue)
         return
 
     def edit_ghi(self):
-        for name, doc in self.data.items():
-            print("Processing file '%s'" % name)
-            doc_issues = self.parse_file(doc)
-            self.handle_issues(doc_issues)
+        self.handle_issues()
 
 
 def options():
@@ -127,10 +168,10 @@ def main():
     a = p.parse_args()
 
     v = EditGhi()
-    v.load_ghi()
+    v.load_gh_issues()
 
     if a.file != None:
-        v.load_file(a.file[0].name, a.file[0])
+        v.load_file(a.file[0])
         v.edit_ghi()
 
 if __name__ == "__main__":
