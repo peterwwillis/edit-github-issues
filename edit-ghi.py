@@ -7,6 +7,7 @@ import re
 import argparse
 import subprocess
 import json
+import os
 
 class Log(object):
     logging = True
@@ -15,7 +16,8 @@ class Log(object):
         print( (" " * (i*4)) + string )
 class Debug(Log):
     """ Debug class. To enable, set logging = True """
-    logging = True
+    logging = False
+    if "DEBUG" in os.environ: logging = os.environ["DEBUG"]
 
 class Util(object):
     @staticmethod
